@@ -21,7 +21,7 @@ serde_json = { version = "1.0.140", default-features = false, features = [
 ] }
 
 # WASM-compatible alternatives
-mimalloc = "0.1.46"
+dlmalloc = { version = "0.2.4", features = ["global"] }
 console_error_panic_hook = "0.1.7"
 
 # Core utilities
@@ -31,7 +31,16 @@ once_cell = { version = "1.18", default-features = false }
 default = ["std"]
 std = []
 decimal = ["rust_decimal"]
+test-utils = []
 
 [dependencies.rust_decimal]
 version = "1.34"
 optional = true
+
+# WASM build targets and optimization settings for all workspace members
+[profile.release]
+opt-level = "z"   # Optimize for size
+lto = true        # Enable Link Time Optimization
+codegen-units = 1 # Reduce parallel codegen for smaller binaries
+panic = "abort"   # Smaller binary by removing unwinding
+strip = true      # Strip debugging symbols

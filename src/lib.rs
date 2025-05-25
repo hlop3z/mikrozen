@@ -5,7 +5,7 @@
 //! ## Features
 //! - Simple router and response macros
 //! - WASM and no_std compatible
-//! - Uses [mimalloc](https://github.com/microsoft/mimalloc) as the global allocator for performance and reliability
+//! - Uses [dlmalloc](https://github.com/alexcrichton/dlmalloc-rs) as the global allocator for production-ready WebAssembly applications
 //!
 //! ## Example
 //!
@@ -32,11 +32,17 @@
 //!
 //! ## Global Allocator
 //!
-//! This crate uses [mimalloc](https://github.com/microsoft/mimalloc) as the global allocator for improved performance and reliability in production environments.
+//! This crate uses [dlmalloc](https://github.com/alexcrichton/dlmalloc-rs) as the global allocator, which is a production-ready allocator
+//! based on the reliable dlmalloc implementation used by emscripten.
 #![no_std]
 
 extern crate alloc;
-extern crate mimalloc;
+
+#[cfg(not(any(test, feature = "test-utils")))]
+extern crate dlmalloc;
+
+#[cfg(any(test, feature = "test-utils"))]
+extern crate std;
 
 use alloc::collections::BTreeMap;
 use alloc::string::String;
@@ -45,8 +51,13 @@ use alloc::string::ToString;
 use alloc::vec::Vec;
 use serde_json::Value;
 
+// dlmalloc handles setting up the global allocator when the "global" feature is enabled
+// For tests, we use the system allocator
+
+// For testing purposes, we need to ensure we have a heap
+#[cfg(any(test, feature = "test-utils"))]
 #[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+static ALLOC: std::alloc::System = std::alloc::System;
 
 pub mod prelude {
     pub use super::{response, router, Input, Output, RouterInput};
@@ -67,6 +78,7 @@ impl RouterInput {
     }
     #[cfg(feature = "decimal")]
     pub fn get_decimal(&self, key: &str) -> rust_decimal::Decimal {
+        use rust_decimal::prelude::FromPrimitive;
         use rust_decimal::prelude::FromStr;
         match self.0.get(key) {
             Some(Value::Number(n)) => rust_decimal::Decimal::from_f64(n.as_f64().unwrap_or(0.0))
@@ -171,9 +183,23 @@ mod tests {
 
     fn hello(args: Input) -> Output {
         let name = args.get_str("name");
-        response! {
-            "message" => format!("Hello, {}", name),
-            "success" => true,
+
+        #[cfg(feature = "decimal")]
+        {
+            let price = args.get_decimal("price");
+            return response! {
+                "message" => format!("Hello, {}", name),
+                "success" => true,
+                "price" => price,
+            };
+        }
+
+        #[cfg(not(feature = "decimal"))]
+        {
+            return response! {
+                "message" => format!("Hello, {}", name),
+                "success" => true,
+            };
         }
     }
 
@@ -185,10 +211,17 @@ mod tests {
     fn test_hello_route() {
         let mut map = BTreeMap::new();
         map.insert("name".to_string(), Value::String("World".to_string()));
+        #[cfg(feature = "decimal")]
+        map.insert(
+            "price".to_string(),
+            Value::Number(serde_json::Number::from_f64(100.0).unwrap()),
+        );
         let input = RouterInput::new(map);
         let out = Router::dispatch("hello", input);
         assert_eq!(out["message"], "Hello, World");
         assert_eq!(out["success"], true);
+        #[cfg(feature = "decimal")]
+        assert_eq!(out["price"].as_str().unwrap(), "100");
     }
 
     #[test]
